@@ -1,0 +1,159 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <iostream>
+#include<unordered_map>
+#include<math.h>
+
+//#define DEBUG
+
+/* Structure of binary trie node */
+struct PltNode{
+    std::unordered_map<uint32_t, int>  hash_table;  
+        
+}hash[32];
+
+/* Initialize binary trie node */
+
+
+void update(struct PltNode *hash,int prel, uint32_t prefix, int portnum, int mark){
+	uint32_t mask = (int)pow(2,prel) - 1;
+	uint32_t padded_mask = mask << (32 - prel);
+	uint32_t prefix_fixed = prefix & padded_mask;
+	int found;
+	
+	if (mark==1){
+		hash[prel].hash_table[prefix_fixed] = portnum; 
+		//printf("\nPrelen = %d, Portnum= %d",prel,portnum);
+	}
+	else{
+		std::unordered_map<uint32_t, int>::const_iterator got = hash[prel].hash_table.find (prefix_fixed);
+		if ( got == hash[prel].hash_table.end() ){
+			found = 0;
+    			//std::cout << "not found";
+		}
+ 		else{
+			found = 1;
+    			//std::cout << got->first << " is " << got->second;
+		}
+		if(found == 0){
+			hash[prel].hash_table[prefix_fixed] = -1;
+		
+		}
+	}
+	
+	//printf("\n%d\n%d\n%d",prelen,prefix,portnum);
+	
+
+}
+
+/* Insert a rule */
+void insert_rule(struct PltNode *hash,uint32_t prefix, int prelen, int portnum){
+    static int     n_rules = 0;
+
+#ifdef DEBUG
+    //uint32_t prefix_r = htonl(prefix);
+    //fprintf(stderr, "Insert rule: %-15s(%08x)/%d    %d\n", 
+     //       inet_ntoa(*(struct in_addr *)&prefix_r), 
+      //      prefix, prelen, portnum);
+#endif
+
+    n_rules ++;
+
+    /* default rule: if packet matches none of the rules, 
+     * it will match this default rule, i.e. 0.0.0.0/0 */
+	if(prelen==32 || prelen == 0){
+		update(hash,prelen,prefix,portnum,1);	
+
+	}
+	else{
+	int a=0;
+	int b=32;
+	while(1){
+		if (prelen>=((a+b)/2))
+		{
+			a=(a+b)/2;
+			//printf("\nIn insert_rule while a=%d",a);
+			if(prelen==a){
+				update(hash,prelen,prefix,portnum,1);
+				return;
+			}
+			else{			
+				update(hash,a,prefix,portnum,0);
+			}
+		}
+		else{
+			b=(a+b)/2;
+		}
+	}    
+	}
+}
+
+
+
+/* Look up an IP address (represented in a uint32_t) */
+int lookup_ip(struct PltNode *hash, uint32_t ip)
+{
+	
+	uint32_t    temp_ip = ip;
+    
+    	int a=0;
+	int b=32;
+	int curr_port=0;
+	int found2;
+	int c=a+b;
+	uint32_t mask;
+	uint32_t pad;
+	uint32_t ip_fixed;
+	
+	for(int z=0;z<1;z++){
+		std::unordered_map<uint32_t, int>::const_iterator got = hash[32].hash_table.find (temp_ip);
+		if ( got == hash[32].hash_table.end() ){
+			found2 = 0;
+    			//std::cout << "not found";
+		}
+ 		else{
+			found2 = 1;
+    			//std::cout << got->first << " is " << got->second;
+			curr_port = hash[32].hash_table[temp_ip];
+			return curr_port;
+		}
+	}
+	int found1;
+	
+	if(curr_port == 0){
+	a=0;
+	b=32;
+	for(int i=0;i<5;i++){
+		
+		
+		mask = (int)pow(2,((a+b)/2)) - 1;
+		pad = mask << (32 - (a+b)/2);
+		ip_fixed = temp_ip & pad;
+		std::unordered_map<uint32_t, int>::const_iterator got = hash[(a+b)/2].hash_table.find (ip_fixed);
+		if ( got == hash[(a+b)/2].hash_table.end() ){
+			found1 = 0;
+			b=(a+b)/2;
+    			
+		}
+ 		else{
+			found1 = 1;
+			a=(a+b)/2;
+			if(hash[a].hash_table[ip_fixed] != -1){
+				curr_port = hash[a].hash_table[ip_fixed];
+				printf("Overwriting at %d\n", a);
+    			
+		}
+				
+		
+		
+	}
+	if(curr_port == 0){
+		curr_port = 6;
+	}
+	
+	}
+
+	
+	return curr_port;
+}

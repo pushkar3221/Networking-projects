@@ -1,0 +1,216 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <math.h>
+#include <iostream>
+
+using namespace std;
+
+//#define DEBUG
+
+#define STRIDE 3
+
+int mask = (int)pow(2,STRIDE) -1;
+int pad = 32 - STRIDE;
+
+
+struct MbtNode{
+
+	struct MbtNode* node; // 2^stride = 2^3 = 8
+	int port;
+};
+
+/* Initialize Multi bit trie node */
+
+struct MbtNode* init_mbtnode(){
+	int size = (int)pow(2,STRIDE);	
+	struct MbtNode *temp = (MbtNode *) malloc(sizeof(struct MbtNode));
+	
+	temp->node = (struct MbtNode*)malloc( sizeof(struct MbtNode) * size );
+	for (int i=0; i<size ; i++)
+	{
+		temp->node[i].node = NULL;
+		temp->node[i].port = -1;
+	}
+	temp->port = -1;
+	return temp;
+}
+
+
+
+/* Clean up binary trie */
+void free_bt(MbtNode *root){
+
+	int size = (int)pow(2,STRIDE);
+	for (int i=0; i<size ; i++)
+	{
+		root->node[i].node = NULL;
+		root->node[i].port = -1;
+	}
+	root->port = -1;
+        free(root);
+}
+
+/* Insert a rule */
+void insert_rule(MbtNode *root, uint32_t prefix, int prelen, int portnum){
+    static int     n_rules = 0;
+	int count = 0;
+
+#ifdef DEBUG
+    uint32_t prefix_r = htonl(prefix);
+    fprintf(stderr, "Insert rule: %-15s(%08x)/%d    %d\n",
+            inet_ntoa(*(struct in_addr *)&prefix_r),
+            prefix, prelen, portnum);
+#endif
+
+    n_rules ++;
+
+    /* default rule: if packet matches none of the rules,
+     * it will match this default rule, i.e. 0.0.0.0/0 */
+    
+    uint32_t    temp_prefix = prefix;
+    MbtNode      *curr_node;
+    MbtNode	*prev_node;
+	curr_node = root;
+	prev_node = root;
+    if(prelen % STRIDE ==0)
+    {
+	count = prelen/STRIDE;
+    }
+    else{
+	count = (prelen/STRIDE) + 1;
+    }
+    int value = STRIDE - (prelen%STRIDE);
+    int increment = (int)pow(2,value);
+    uint32_t     curr_bit_set;
+    curr_bit_set = (temp_prefix & mask);
+    curr_bit_set = curr_bit_set >> (32 - STRIDE);
+    if( prelen == 0 ){
+	//printf("\nif loop\n");
+	for(int a=0;a<=7;a++){
+		//printf("\nfor loop\n");
+		if(root->node[a].port ==-1)
+		{
+			root->node[a].port = portnum;
+			//printf("\nPortnum(prelen 0) = %d\n",root->node[a].port);
+			
+		}
+	}
+        
+        return;
+    }
+
+
+    for(int i=0 ; i<count ; i++)
+	{
+
+	        curr_bit_set = (temp_prefix & mask);
+		curr_bit_set = curr_bit_set >> (32 - STRIDE);
+		//printf("Count = %d,  Bit Set = %d\n",count,curr_bit_set);
+		
+
+	        if(curr_node->node[curr_bit_set].node == NULL)
+		{
+			if((count-i)>1){
+				curr_node->node[curr_bit_set].node = init_mbtnode();
+			}
+			else{
+				break;
+			}
+			prev_node = curr_node;
+			curr_node = curr_node->node[curr_bit_set].node;
+			
+		}
+		else
+		{
+			prev_node=curr_node;
+			curr_node = curr_node->node[curr_bit_set].node;
+	
+		}
+
+		temp_prefix = temp_prefix << STRIDE;
+
+	}
+
+
+    if( curr_node[curr_bit_set].port != -1 ){
+        fprintf(stderr, "Error: Rule #%d - overwriting a previous rule !! \n", n_rules);
+    }
+    curr_node->node[curr_bit_set].port = portnum;
+    //printf("\nPortnum = %d\n",curr_node[curr_bit_set].port);
+    if(prelen%STRIDE != 0){
+	for(int j=increment;j>1;j--)
+	{
+		if(prev_node->node[++curr_bit_set].port == -1){
+			prev_node->node[curr_bit_set].port = portnum;
+		}
+	}
+    }
+
+			
+}
+
+/*void trie_traversal(MbtNode *rnode){
+
+	MbtNode *curr;
+	for(int i=0;i<8;i++)
+	{
+		if(rnode->node[i].node != NULL){
+			curr = &rnode->node[i];			
+			for(int j=0;j<8;j++){
+				
+				//printf("\nRootNode[%d]->node[%d] port : %d\n",i,j,curr->node[j].port);
+				if(curr->node[j].node != NULL){
+					//printf("Node not Null.\n");
+				}
+			}
+		}
+	}
+	
+
+}*/
+
+/* Look up an IP address (represented in a uint32_t) */
+int lookup_ip(MbtNode *root, uint32_t ip){
+    uint32_t    temp_ip = ip;
+    MbtNode      *curr_node = root;
+    int         curr_port = 1;
+    int count =0;
+    if(temp_ip % STRIDE ==0)
+    {
+	count = temp_ip/STRIDE;
+    }
+    else{
+	count = (temp_ip/STRIDE) + 1;
+    }
+    //int temp_port =0;
+    //printf("\nLookup IP\n");
+    for(int i=0 ; i<count ; i++){
+	uint32_t         curr_bit_set = (temp_ip & mask);
+        curr_bit_set = curr_bit_set >> (32 - STRIDE);
+        if(curr_node->node[curr_bit_set].node == NULL)
+	{
+		if(curr_node->node[curr_bit_set].port != -1){
+			curr_port = curr_node->node[curr_bit_set].port;
+			//printf("\nPortnum(Lookup) = %d %d\n",curr_node->node[curr_bit_set].port,curr_bit_set);
+		
+			return curr_port;
+	
+		}	
+	}
+	else
+	{
+		
+		if(curr_node->node[curr_bit_set].port != -1){
+
+			curr_port = curr_node->node[curr_bit_set].port;
+			//printf("\nPortnum(Lookup2) = %d %d\n",curr_node->node[curr_bit_set].port,curr_bit_set);
+		}
+		curr_node = curr_node->node[curr_bit_set].node;
+	}
+
+
+        temp_ip = temp_ip << STRIDE;
+    }
+	return curr_port;
+}
